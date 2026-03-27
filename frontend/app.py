@@ -256,7 +256,10 @@ elif "X-Ray" in page:
                 req = MFXRayRequest(statement_text=text)
                 d = agents["mf_xray"].evaluate_portfolio(req).model_dump()
                 
-                st.error(d['overlap_warning']) if "High" in d['overlap_warning'] else st.warning(d['overlap_warning'])
+                if "High" in d['overlap_warning']:
+                    st.error(d['overlap_warning'])
+                else:
+                    st.warning(d['overlap_warning'])
                 
                 c1, c2 = st.columns(2)
                 c1.metric("Est. Return (XIRR)", f"{d['xirr']}%", d['benchmark_comparison'])
