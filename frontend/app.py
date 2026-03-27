@@ -3,13 +3,30 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
-import requests
 
-API_BASE = "http://localhost:8000"
+# Direct imports bypass the need for a separate FastAPI backend on Streamlit Cloud
+from backend.models import UserInput, LifeEventRequest, CoupleInput, TaxWizardInput, MFXRayRequest
+from backend.orchestration import FinPilotOrchestrator
+from agents.life_event_agent import LifeEventAgent
+from agents.tax_wizard_agent import TaxWizardAgent
+from agents.couple_agent import CoupleAgent
+from agents.mf_xray_agent import MFXRayAgent
+
+# Initialize Agents
+@st.cache_resource
+def get_agents():
+    return {
+        "orchestrator": FinPilotOrchestrator(),
+        "life_event": LifeEventAgent(),
+        "tax_wizard": TaxWizardAgent(),
+        "couple": CoupleAgent(),
+        "mf_xray": MFXRayAgent()
+    }
+
+agents = get_agents()
 
 st.set_page_config(page_title="FinPilot AI", page_icon="💸", layout="wide")
 
-# Custom UI styling for a friendlier feel
 st.markdown("""
 <style>
     div[data-testid="stMetricValue"] { color: #1E88E5; font-weight: bold; }
@@ -33,7 +50,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.header("2. Quick Load Personas")
-    st.markdown("Don't want to type your exact numbers? Pick a profile to see how it works:")
     
     if st.button("👨‍💻 The 30yo Engineer"):
         st.session_state.base_profile = {
@@ -53,7 +69,6 @@ with st.sidebar:
         }
         st.success("Loaded Saver Profile!")
 
-# Default Profile if not set
 if "base_profile" not in st.session_state:
     st.session_state.base_profile = {
         "age": 28, "monthly_income": 80000, "monthly_expenses": 40000,
@@ -67,9 +82,7 @@ pr = st.session_state.base_profile
 # ----------------- PAGE 1: MONEY HEALTH & FIRE -----------------
 if "FIRE" in page:
     st.header("🎯 Money Health & FIRE Roadmap")
-    st.markdown("Find out your financial health score and exactly how much you need to save to hit your goals.")
     
-    # Using sliders makes it much less intimidating for "real people"
     with st.expander("🛠️ Tweak Your Numbers", expanded=False):
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -96,12 +109,14 @@ if "FIRE" in page:
 
     if st.button("Analyze Financial Health ✨", type="primary", use_container_width=True):
         with st.spinner("Calculating 6 core metrics..."):
-            res = requests.post(f"{API_BASE}/analyze", json=st.session_state.base_profile)
-            if res.status_code == 200:
+            try:
+                user_obj = UserInput(**st.session_state.base_profile)
+                report = agents["orchestrator"].run_pipeline(user_obj)
+                
                 st.balloons()
-                data = res.json()
-                h = data["health_score"]
-                p = data["financial_plan"]
+                h = report.health_score.model_dump()
+                p = report.financial_plan.model_dump()
+                t = report.tax_optimization.model_dump()
                 
                 st.markdown("---")
                 cols = st.columns([1, 2])
@@ -121,12 +136,13 @@ if "FIRE" in page:
                     st.info(f"**Optimal Asset Split:** {p['asset_allocation']['equity']}% Equity / {p['asset_allocation']['debt']}% Safe Debt")
                     
                     st.markdown("### 🤖 FinPilot's Advice")
-                    st.success(data["ai_insights"])
+                    st.success(report.ai_insights)
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 # ----------------- PAGE 2: LIFE EVENT ADVISOR -----------------
 elif "Life Event" in page:
     st.header("⚡ Life Event Financial Guide")
-    st.markdown("Sudden financial changes can be scary or exciting. Let AI guide your next move.")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -136,15 +152,22 @@ elif "Life Event" in page:
         details = st.text_area("Any specifics?", "e.g., I want to put some of it into a fixed deposit safely.")
         
     if st.button("Give me a strategy", type="primary"):
-        payload = {"user_input": pr, "event_type": event, "event_amount": amount, "additional_details": details}
         with st.spinner("Reviewing your profile against this event..."):
-            res = requests.post(f"{API_BASE}/life-event", json=payload)
-            st.info(res.json().get("advice", "Error connecting."))
+            try:
+                req = LifeEventRequest(
+                    user_input=UserInput(**pr),
+                    event_type=event,
+                    event_amount=amount,
+                    additional_details=details
+                )
+                advice = agents["life_event"].evaluate_life_event(req)
+                st.info(advice)
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 # ----------------- PAGE 3: TAX WIZARD -----------------
 elif "Tax" in page:
     st.header("🛡️ Tax Optimization Wizard")
-    st.markdown("Stop guessing. Enter your simple salary components and figure out exactly what regime to choose.")
     
     c1, c2 = st.columns(2)
     with c1:
@@ -157,25 +180,29 @@ elif "Tax" in page:
         home = st.number_input("Home Loan Interest", value=0, step=50000)
         
     if st.button("Calculate Tax Moves", type="primary"):
-        payload = {"basic_salary": basic, "hra": hra, "lta": 0, "special_allowance": 400000, 
-                   "provident_fund": pf, "home_loan_interest": home, 
-                   "health_insurance_premium": health, "other_80c": other_80c}
         with st.spinner("Comparing Old vs New Regime against the latest slabs..."):
-            d = requests.post(f"{API_BASE}/tax-wizard", json=payload).json()
-            st.success(f"### 🎉 Recommended: {d['recommended_regime']}")
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Old Regime Tax", f"₹{d['old_regime_tax']:,.0f}")
-            c2.metric("New Regime Tax", f"₹{d['new_regime_tax']:,.0f}")
-            
-            if d['missed_80c'] > 0:
-                st.warning(f"**Missed 80C Limit:** You can still invest ₹{d['missed_80c']:,.0f} to save more tax.")
-            st.info(d.get("advice", ""))
+            try:
+                req = TaxWizardInput(
+                    basic_salary=basic, hra=hra, lta=0, special_allowance=400000,
+                    provident_fund=pf, home_loan_interest=home,
+                    health_insurance_premium=health, other_80c=other_80c
+                )
+                d = agents["tax_wizard"].evaluate_tax(req)
+                st.success(f"### 🎉 Recommended: {d['recommended_regime']}")
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Old Regime Tax", f"₹{d['old_regime_tax']:,.0f}")
+                c2.metric("New Regime Tax", f"₹{d['new_regime_tax']:,.0f}")
+                
+                if d['missed_80c'] > 0:
+                    st.warning(f"**Missed 80C Limit:** You can still invest ₹{d['missed_80c']:,.0f} to save more tax.")
+                st.info(d.get("advice", ""))
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 # ----------------- PAGE 4: COUPLE'S PLANNER -----------------
 elif "Couple" in page:
     st.header("❤️ Couple's Wealth Planner")
-    st.markdown("Planning as a team? Maximize joint benefits like HRA swapping and splitting capital gains.")
     
     c1, c2 = st.columns(2)
     with c1:
@@ -186,31 +213,47 @@ elif "Couple" in page:
         pb_inc = st.number_input("Monthly Income (B)", value=90000, step=10000)
         
     if st.button("Generate Joint Plan", type="primary"):
-        p1, p2 = pr.copy(), pr.copy()
-        p1["monthly_income"], p2["monthly_income"] = pa_inc, pb_inc
-        p1["total_debt"], p2["total_debt"] = 200000, 0
-        
         with st.spinner("Finding joint tax loopholes..."):
-            r = requests.post(f"{API_BASE}/couple-planner", json={"partner_1": p1, "partner_2": p2, "joint_goals": ["Buy a House"]}).json()
-            st.markdown("### The Couple's Playbook")
-            st.write(f"🏠 **HRA Strategy:** {r['hra_optimization']}")
-            st.write(f"📈 **SIP Splitting:** {r['sip_splits']}")
-            st.info(r['insurance_strategy'])
+            try:
+                p1 = pr.copy()
+                p2 = pr.copy()
+                p1["monthly_income"], p2["monthly_income"] = pa_inc, pb_inc
+                p1["total_debt"], p2["total_debt"] = 200000, 0
+                
+                req = CoupleInput(
+                    partner_1=UserInput(**p1),
+                    partner_2=UserInput(**p2),
+                    joint_goals=["Buy a House"]
+                )
+                r = agents["couple"].evaluate_couple(req).model_dump()
+                
+                st.markdown("### The Couple's Playbook")
+                st.subheader(f"Combined Net Worth: ₹{r['total_net_worth']:,.0f}")
+                
+                st.write(f"🏠 **HRA Strategy:** {r['hra_optimization']}")
+                st.write(f"📈 **SIP Splitting:** {r['sip_splits']}")
+                st.info(r['insurance_strategy'])
+            except Exception as e:
+                st.error(f"Error: {e}")
 
 # ----------------- PAGE 5: MF X-RAY -----------------
 elif "X-Ray" in page:
     st.header("📊 Mutual Fund X-Ray")
-    st.markdown("See if you bought 5 different funds that all hold the exact same stocks!")
     
     text = st.text_area("Paste your mutual fund names here (simulating a statement PDF):", "HDFC Midcap - 20%\nSBI Small Cap - 15%\nAxis Bluechip - 30%\nParag Parikh Flexi - 10%\nKotak Emerging - 15%\nNippon Small - 10%")
     
     if st.button("Scan Portfolio", type="primary"):
         with st.spinner("Analyzing overlaps..."):
-            d = requests.post(f"{API_BASE}/mf-xray", json={"statement_text": text}).json()
-            st.error(d['overlap_warning']) if "High" in d['overlap_warning'] else st.warning(d['overlap_warning'])
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Est. Return (XIRR)", f"{d['xirr']}%", d['benchmark_comparison'])
-            c2.metric("Expense Ratio Drag", f"{d['expense_ratio_drag']}% (paying too much in fees!)")
-            
-            st.success(d['rebalancing_plan'])
+            try:
+                req = MFXRayRequest(statement_text=text)
+                d = agents["mf_xray"].evaluate_portfolio(req).model_dump()
+                
+                st.error(d['overlap_warning']) if "High" in d['overlap_warning'] else st.warning(d['overlap_warning'])
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Est. Return (XIRR)", f"{d['xirr']}%", d['benchmark_comparison'])
+                c2.metric("Expense Ratio Drag", f"{d['expense_ratio_drag']}% (paying too much in fees!)")
+                
+                st.success(d['rebalancing_plan'])
+            except Exception as e:
+                st.error(f"Error: {e}")
