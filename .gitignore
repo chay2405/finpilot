@@ -7,4 +7,5 @@ __pycache__/
 pip_error.log
 *.docx
 generate_doc.py
-pip_error.log
+*.pptx
+generate_deck.py
