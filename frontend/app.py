@@ -173,6 +173,8 @@ elif "Tax" in page:
     with c1:
         basic = st.number_input("Basic Salary", value=600000, step=50000)
         hra = st.number_input("HRA Claimed", value=150000, step=10000)
+        lta = st.number_input("LTA", value=50000, step=5000)
+        special = st.number_input("Special Allowance", value=400000, step=25000)
         pf = st.number_input("Provident Fund (Employee)", value=72000, step=5000)
     with c2:
         other_80c = st.number_input("80C Investments (LIC, ELSS, PPF)", value=30000, step=10000)
@@ -183,7 +185,7 @@ elif "Tax" in page:
         with st.spinner("Comparing Old vs New Regime against the latest slabs..."):
             try:
                 req = TaxWizardInput(
-                    basic_salary=basic, hra=hra, lta=0, special_allowance=400000,
+                    basic_salary=basic, hra=hra, lta=lta, special_allowance=special,
                     provident_fund=pf, home_loan_interest=home,
                     health_insurance_premium=health, other_80c=other_80c
                 )
@@ -208,9 +210,13 @@ elif "Couple" in page:
     with c1:
         st.subheader("Partner A")
         pa_inc = st.number_input("Monthly Income (A)", value=120000, step=10000)
+        pa_sav = st.number_input("Savings & Investments (A)", value=500000, step=50000)
+        pa_debt = st.number_input("Total Debt (A)", value=200000, step=50000)
     with c2:
         st.subheader("Partner B")
         pb_inc = st.number_input("Monthly Income (B)", value=90000, step=10000)
+        pb_sav = st.number_input("Savings & Investments (B)", value=300000, step=50000)
+        pb_debt = st.number_input("Total Debt (B)", value=0, step=50000)
         
     if st.button("Generate Joint Plan", type="primary"):
         with st.spinner("Finding joint tax loopholes..."):
@@ -218,7 +224,9 @@ elif "Couple" in page:
                 p1 = pr.copy()
                 p2 = pr.copy()
                 p1["monthly_income"], p2["monthly_income"] = pa_inc, pb_inc
-                p1["total_debt"], p2["total_debt"] = 200000, 0
+                p1["current_investments"], p2["current_investments"] = pa_sav, pb_sav
+                p1["current_savings"], p2["current_savings"] = 0, 0
+                p1["total_debt"], p2["total_debt"] = pa_debt, pb_debt
                 
                 req = CoupleInput(
                     partner_1=UserInput(**p1),
