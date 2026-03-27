@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 pip_error.log
+*.docx
+generate_doc.py
+pip_error.log
